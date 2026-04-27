@@ -1,0 +1,212 @@
+
+const SHEET_NAME = 'Trucking Vendors Insurance'; 
+const HEADER_ROWS = 1;
+
+
+function onOpen() {
+  const ui = SpreadsheetApp.getUi();
+  ui.createMenu('Custom Menu')
+    .addItem('Send Email','dailySweep')
+    .addToUi();
+}
+
+function isValidEmail_(s) {
+  s = String(s || '').trim();
+  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(s);
+}
+
+// Columns (1-based)
+const COL_EMAIL  = 2; // B
+const COL_STATUS = 3; // C
+const COL_TRACK  = 6; // F
+
+const RED_THRESHOLDS = {
+  rMin: 0.75,
+  gMax: 0.35,
+  bMax: 0.35,
+};
+
+
+function dailySweep() {
+  const ss = SpreadsheetApp.getActive();
+  const sheet = ss.getSheetByName(SHEET_NAME);
+  if (!sheet) throw new Error(`Sheet not found: ${SHEET_NAME}`);
+
+  const lastRow = sheet.getLastRow();
+  if (lastRow <= HEADER_ROWS) return;
+
+  for (let row = HEADER_ROWS + 1; row <= lastRow; row++) {
+    const email = String(sheet.getRange(row, COL_EMAIL).getValue() || '').trim();
+    if (!email) continue;
+
+    if (!isValidEmail_(email)) {
+      sheet.getRange(row, COL_STATUS).setValue(`SKIPPED – invalid email: ${email}`);
+      continue;
+    }
+
+    const reason = getTriggerReasonForRow_(sheet, row);
+    if (!reason) continue;
+
+    if (alreadyNotifiedToday_(sheet.getSheetId(), row, reason)) continue;
+
+    sendNotification_(email, sheet, row, reason);
+    markNotifiedToday_(sheet.getSheetId(), row, reason);
+  }
+}
+
+
+function installDailyTrigger() {
+  ScriptApp.newTrigger('dailySweep')
+    .timeBased()
+    .onMonthDay(0)
+    .atHour(8)
+    .create();
+}
+
+
+function getTriggerReasonForRow_(sheet, row) {
+  const cell = sheet.getRange(row, COL_TRACK);
+  const value = cell.getValue();
+
+  if (isPastToday_(value)) return 'PAST_DUE';
+
+  const rgb = getEffectiveBackgroundRgb_(sheet, row, COL_TRACK);
+  if (rgb && isRedish_(rgb)) return 'RED_CONDITIONAL';
+
+  return '';
+}
+
+function isPastToday_(value) {
+  if (!(value instanceof Date)) return false;
+
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+
+  const d = new Date(value);
+  d.setHours(0, 0, 0, 0);
+
+  return d < today;
+}
+
+function isRedish_(rgb) {
+  return (
+    rgb.r >= RED_THRESHOLDS.rMin &&
+    rgb.g <= RED_THRESHOLDS.gMax &&
+    rgb.b <= RED_THRESHOLDS.bMax
+  );
+}
+
+
+function getEffectiveBackgroundRgb_(sheet, row, col) {
+  const ss = sheet.getParent();
+  const spreadsheetId = ss.getId();
+  const a1 = `${sheet.getName()}!${colToLetter_(col)}${row}`;
+
+  const res = Sheets.Spreadsheets.get(spreadsheetId, {
+    ranges: [a1],
+    includeGridData: true,
+    fields: 'sheets(data(rowData(values(effectiveFormat(backgroundColor)))))',
+  });
+
+  const bg =
+    res.sheets?.[0]?.data?.[0]?.rowData?.[0]?.values?.[0]
+      ?.effectiveFormat?.backgroundColor;
+
+  if (!bg) return null;
+
+  return {
+    r: bg.red   ?? 0,
+    g: bg.green ?? 0,
+    b: bg.blue  ?? 0,
+  };
+}
+
+function colToLetter_(col) {
+  let letter = '';
+  while (col > 0) {
+    const t = (col - 1) % 26;
+    letter = String.fromCharCode(t + 65) + letter;
+    col = (col - t - 1) / 26;
+  }
+  return letter;
+}
+
+
+function sendNotification_(email, sheet, row, reason) {
+  const ss = sheet.getParent();
+  const tz = ss.getSpreadsheetTimeZone();
+  const now = Utilities.formatDate(new Date(), tz, 'yyyy-MM-dd HH:mm');
+
+  const subject =
+    reason === 'PAST_DUE'
+      ? `RevolutionX:  COI Request`
+      : `Flagged – Action Required`;
+
+  // Grab logo from Drive (inline image)
+ const logoBlob = DriveApp.getFileById('1gxJcQjTa-_D5DqEfMXgETI_r7WHKK7uk').getBlob();
+
+const signatureHtml = `
+  <div style="margin-top:20px;">
+    <img src="cid:signatureImage" alt="Compliance Department Signature"
+         style="max-width:500px; display:block;">
+  </div>
+`;
+
+
+
+  // Main message HTML
+  const htmlBody = `
+    <p>Hello,</p>
+
+    <p>This is a notification from <strong>RevolutionX</strong>.</p>
+
+    <p><strong>Reason:</strong> ${
+      reason === 'PAST_DUE'
+        ? 'We are reaching out to request an updated COI. If you are not the correct contact can you please forward this request.'
+        : 'Marked red via conditional formatting'
+    }</p>
+
+    <p>
+      1. Certificate of Insurance - Please list
+      "Air Charter Control, LLC DBA Revolution X, 150 Jeffords, Suite 101, Dexter MI 48130"
+      as a certificate holder/additionally insured.
+    </p>
+
+    <p>
+      Please advise of any business changes (address, business entity type, or other) that have occurred within the past year.
+    </p>
+
+    <br><br>
+
+    ${signatureHtml}
+  `;
+
+  // Send
+  MailApp.sendEmail({
+    to: email,
+    cc: 'compliance@gorevolutionx.com',
+    subject: subject,
+    body: 'Please view this email in HTML format.',
+    htmlBody: htmlBody,
+    inlineImages: { signatureImage: logoBlob },
+    name: 'Austin Hochstedler'
+  });
+
+  // Update status column
+  sheet.getRange(row, COL_STATUS).setValue(
+    `Email sent – ${now} – ${reason === 'PAST_DUE' ? 'Past Due' : 'Red Flag'}`
+  );
+}
+
+function key_(sheetId, row, reason) {
+  const today = Utilities.formatDate(new Date(), Session.getScriptTimeZone(), 'yyyyMMdd');
+  return `notified:${sheetId}:${row}:${reason}:${today}`;
+}
+
+function alreadyNotifiedToday_(sheetId, row, reason) {
+  return PropertiesService.getScriptProperties().getProperty(key_(sheetId, row, reason)) === '1';
+}
+
+function markNotifiedToday_(sheetId, row, reason) {
+  PropertiesService.getScriptProperties().setProperty(key_(sheetId, row, reason), '1');
+}
