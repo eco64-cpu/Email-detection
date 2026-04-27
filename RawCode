@@ -142,8 +142,8 @@ function sendNotification_(email, sheet, row, reason) {
       ? `RevolutionX:  COI Request`
       : `Flagged – Action Required`;
 
-  // Grab logo from Drive (inline image)
- const logoBlob = DriveApp.getFileById('1gxJcQjTa-_D5DqEfMXgETI_r7WHKK7uk').getBlob();
+  // Grab logo from Drive
+ const logoBlob = DriveApp.getFileById('Logo from GoogleDrive link here').getBlob();
 
 const signatureHtml = `
   <div style="margin-top:20px;">
@@ -158,7 +158,7 @@ const signatureHtml = `
   const htmlBody = `
     <p>Hello,</p>
 
-    <p>This is a notification from <strong>RevolutionX</strong>.</p>
+    <p>This is a notification from <strong>Revolution</strong>.</p>
 
     <p><strong>Reason:</strong> ${
       reason === 'PAST_DUE'
@@ -168,7 +168,7 @@ const signatureHtml = `
 
     <p>
       1. Certificate of Insurance - Please list
-      "Air Charter Control, LLC DBA Revolution X, 150 Jeffords, Suite 101, Dexter MI 48130"
+      "AirControl"
       as a certificate holder/additionally insured.
     </p>
 
@@ -184,12 +184,12 @@ const signatureHtml = `
   // Send
   MailApp.sendEmail({
     to: email,
-    cc: 'compliance@gorevolutionx.com',
+    cc: 'Youremail@here',
     subject: subject,
     body: 'Please view this email in HTML format.',
     htmlBody: htmlBody,
     inlineImages: { signatureImage: logoBlob },
-    name: 'Austin Hochstedler'
+    name: 'eco64'
   });
 
   // Update status column
